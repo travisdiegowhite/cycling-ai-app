@@ -8,6 +8,14 @@
 # testing
 /coverage
 
+# configuration
+/src/config.js
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
 # production
 /build
 

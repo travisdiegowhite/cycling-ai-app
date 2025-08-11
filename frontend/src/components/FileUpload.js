@@ -2,65 +2,107 @@
 import React, { useState } from 'react';
 import Papa from 'papaparse';
 import './FileUpload.css';
+import { supabase } from '../supabase';
 
 const FileUpload = () => {
   // State to manage uploaded files and parsed data
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [parsedData, setParsedData] = useState(null);
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [processedFiles, setProcessedFiles] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [error, setError] = useState(null);
+  const [currentFile, setCurrentFile] = useState(null);
+  const [errors, setErrors] = useState({});
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   // Supported file types for cycling data
   const supportedTypes = ['.gpx', '.tcx', '.csv'];
 
   // Handle file selection
   const handleFileSelect = (event) => {
-    const file = event.target.files[0];
-    setError(null); // Clear any previous errors
+    const files = Array.from(event.target.files);
+    setErrors({});
     
-    if (file) {
-      // Validate file type
+    // Filter valid files
+    const validFiles = files.filter(file => {
       const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
-      
-      if (supportedTypes.includes(fileExtension)) {
-        setSelectedFile(file);
-        processFile(file);
-      } else {
-        setError(`Unsupported file type. Please select a ${supportedTypes.join(', ')} file.`);
+      if (!supportedTypes.includes(fileExtension)) {
+        setErrors(prev => ({
+          ...prev,
+          [file.name]: `Unsupported file type. Please select a ${supportedTypes.join(', ')} file.`
+        }));
+        return false;
       }
+      return true;
+    });
+
+    setSelectedFiles(validFiles);
+    if (validFiles.length > 0) {
+      processFiles(validFiles);
     }
   };
 
-  // Main file processing function
-  const processFile = async (file) => {
-    setIsProcessing(true);
-    setError(null);
-    
+  // Save route data to Supabase
+  const saveRouteToSupabase = async (routeData) => {
     try {
-      const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
-      const fileContent = await readFileContent(file);
+      const { data, error } = await supabase
+        .from('routes')
+        .insert({
+          metadata: routeData.metadata,
+          track_points: routeData.trackPoints,
+          summary: routeData.summary
+        });
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error saving to Supabase:', error);
+      throw error;
+    }
+  };
+
+  // Process multiple files
+  const processFiles = async (files) => {
+    setIsProcessing(true);
+    setProcessedFiles([]);
+    setUploadProgress(0);
+    
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      setCurrentFile(file);
       
-      let result;
-      switch (fileExtension) {
-        case '.gpx':
-          result = await parseGPX(fileContent, file.name);
-          break;
-        case '.tcx':
-          result = await parseTCX(fileContent, file.name);
-          break;
-        case '.csv':
-          result = await parseCSV(fileContent, file.name);
-          break;
-        default:
-          throw new Error('Unsupported file type');
+      try {
+        const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+        const fileContent = await readFileContent(file);
+        
+        let result;
+        switch (fileExtension) {
+          case '.gpx':
+            result = await parseGPX(fileContent, file.name);
+            break;
+          case '.tcx':
+            result = await parseTCX(fileContent, file.name);
+            break;
+          case '.csv':
+            result = await parseCSV(fileContent, file.name);
+            break;
+          default:
+            throw new Error('Unsupported file type');
+        }
+        
+        await saveRouteToSupabase(result);
+        setProcessedFiles(prev => [...prev, { file, result, success: true }]);
+      } catch (err) {
+        setErrors(prev => ({
+          ...prev,
+          [file.name]: `Error processing file: ${err.message}`
+        }));
+        setProcessedFiles(prev => [...prev, { file, success: false, error: err.message }]);
       }
       
-      setParsedData(result);
-    } catch (err) {
-      setError(`Error processing file: ${err.message}`);
-    } finally {
-      setIsProcessing(false);
+      setUploadProgress(((i + 1) / files.length) * 100);
     }
+    
+    setIsProcessing(false);
+    setCurrentFile(null);
   };
 
   // Helper function to read file content
@@ -330,91 +372,93 @@ const FileUpload = () => {
   return (
     <div className="file-upload-container">
       <div className="upload-section">
-        <h2>Upload Cycling Data</h2>
-        <div className="file-input-container">
+        <label htmlFor="file-upload" className={`upload-area ${isProcessing ? 'processing' : ''}`}>
           <input
             type="file"
-            id="file-input"
-            accept=".gpx,.tcx,.csv"
+            id="file-upload"
             onChange={handleFileSelect}
-            className="file-input"
+            accept=".gpx,.tcx,.csv"
+            disabled={isProcessing}
+            multiple
           />
-          <label htmlFor="file-input" className="file-input-label">
-            Choose File (.gpx, .tcx, .csv)
-          </label>
-        </div>
-        
-        {selectedFile && (
-          <p className="selected-file">Selected: {selectedFile.name}</p>
-        )}
-        
-        {isProcessing && (
-          <div className="processing">
-            <p>Processing file...</p>
-          </div>
-        )}
-        
-        {error && (
-          <div className="error">
-            <p>Error: {error}</p>
+          {isProcessing ? (
+            <div className="processing-indicator">
+              <div className="progress-bar">
+                <div 
+                  className="progress-bar-fill" 
+                  style={{ width: `${uploadProgress}%` }}
+                ></div>
+              </div>
+              <span>Processing: {currentFile?.name || 'Preparing files...'}</span>
+              <span>{Math.round(uploadProgress)}%</span>
+            </div>
+          ) : (
+            <div className="upload-prompt">
+              <span>Drag & drop your ride files here or click to browse</span>
+              <small>Supported formats: GPX, TCX, CSV</small>
+              <small>You can select multiple files</small>
+            </div>
+          )}
+        </label>
+
+        {Object.keys(errors).length > 0 && (
+          <div className="errors">
+            {Object.entries(errors).map(([filename, error]) => (
+              <div key={filename} className="error">
+                <p>{filename}: {error}</p>
+              </div>
+            ))}
           </div>
         )}
       </div>
 
-      {parsedData && (
+      {processedFiles.length > 0 && (
         <div className="results-section">
-          <h3>Ride Data Summary</h3>
-          <div className="metadata">
-            <p><strong>File:</strong> {parsedData.metadata.filename}</p>
-            <p><strong>Type:</strong> {parsedData.metadata.type.toUpperCase()}</p>
-            <p><strong>Uploaded:</strong> {new Date(parsedData.metadata.uploadedAt).toLocaleString()}</p>
-          </div>
-          
-          <div className="summary-stats">
-            <div className="stat">
-              <label>Distance:</label>
-              <span>{parsedData.summary.distance} km</span>
-            </div>
-            <div className="stat">
-              <label>Duration:</label>
-              <span>{formatDuration(parsedData.summary.duration)}</span>
-            </div>
-            <div className="stat">
-              <label>Elevation Gain:</label>
-              <span>{parsedData.summary.elevationGain} m</span>
-            </div>
-            {parsedData.summary.averagePower && (
-              <div className="stat">
-                <label>Average Power:</label>
-                <span>{parsedData.summary.averagePower} watts</span>
-              </div>
-            )}
-            {parsedData.summary.averageHeartRate && (
-              <div className="stat">
-                <label>Average Heart Rate:</label>
-                <span>{parsedData.summary.averageHeartRate} bpm</span>
-              </div>
-            )}
-            <div className="stat">
-              <label>Data Points:</label>
-              <span>{parsedData.summary.pointCount}</span>
-            </div>
-          </div>
-          
-          <div className="track-points-preview">
-            <h4>Track Points Preview (first 5 points)</h4>
-            <div className="points-table">
-              {parsedData.trackPoints.slice(0, 5).map((point, index) => (
-                <div key={index} className="point-row">
-                  <span>Lat: {point.latitude?.toFixed(6)}</span>
-                  <span>Lon: {point.longitude?.toFixed(6)}</span>
-                  {point.elevation && <span>Ele: {point.elevation}m</span>}
-                  {point.power && <span>Power: {point.power}W</span>}
-                  {point.heartRate && <span>HR: {point.heartRate}bpm</span>}
+          <h3>Processed Files ({processedFiles.length})</h3>
+          {processedFiles.map(({ file, result, success, error }) => (
+            <div key={file.name} className={`file-result ${success ? 'success' : 'error'}`}>
+              <h4>{file.name}</h4>
+              {success ? (
+                <>
+                  <div className="metadata">
+                    <p><strong>Type:</strong> {result.metadata.type.toUpperCase()}</p>
+                    <p><strong>Uploaded:</strong> {new Date(result.metadata.uploadedAt).toLocaleString()}</p>
+                  </div>
+                  
+                  <div className="summary-stats">
+                    <div className="stat">
+                      <label>Distance:</label>
+                      <span>{result.summary.distance} km</span>
+                    </div>
+                    <div className="stat">
+                      <label>Duration:</label>
+                      <span>{formatDuration(result.summary.duration)}</span>
+                    </div>
+                    <div className="stat">
+                      <label>Elevation Gain:</label>
+                      <span>{result.summary.elevationGain} m</span>
+                    </div>
+                    {result.summary.averagePower && (
+                      <div className="stat">
+                        <label>Average Power:</label>
+                        <span>{result.summary.averagePower} watts</span>
+                      </div>
+                    )}
+                    {result.summary.averageHeartRate && (
+                      <div className="stat">
+                        <label>Average Heart Rate:</label>
+                        <span>{result.summary.averageHeartRate} bpm</span>
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="error-message">
+                  <p>{error}</p>
                 </div>
-              ))}
+              )}
             </div>
-          </div>
+          ))}
         </div>
       )}
     </div>
