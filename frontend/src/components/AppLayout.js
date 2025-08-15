@@ -12,7 +12,7 @@ import {
   Flex,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { Map, Upload, User, LogOut, Route } from 'lucide-react';
+import { Map, Upload, User, LogOut, Route, Brain } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 const AppLayout = ({ children, activePage, setActivePage }) => {
@@ -79,6 +79,16 @@ const AppLayout = ({ children, activePage, setActivePage }) => {
 
       <AppShell.Navbar p="md">
         <Flex direction="column" gap="xs">
+          <Button
+            variant={activePage === 'ai-routes' ? 'filled' : 'subtle'}
+            leftSection={<Brain size={18} />}
+            onClick={() => setActivePage('ai-routes')}
+            justify="flex-start"
+            fullWidth
+          >
+            AI Route Generator
+          </Button>
+
           <Button
             variant={activePage === 'upload' ? 'filled' : 'subtle'}
             leftSection={<Upload size={18} />}

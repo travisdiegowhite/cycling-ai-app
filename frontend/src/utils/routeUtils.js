@@ -1,12 +1,12 @@
 // Advanced geometry utilities for route manipulation
-import * as turf from '@turf/turf';
+import { lineString, point, nearestPointOnLine, simplify } from '@turf/turf';
 
 // Find the nearest point on a line to a given coordinate
-export function nearestPointOnLine(lineCoords, targetCoord) {
+export function findNearestPointOnLine(lineCoords, targetCoord) {
   try {
-    const line = turf.lineString(lineCoords);
-    const point = turf.point(targetCoord);
-    const nearest = turf.nearestPointOnLine(line, point);
+    const line = lineString(lineCoords);
+    const pt = point(targetCoord);
+    const nearest = nearestPointOnLine(line, pt);
     
     return {
       coordinate: nearest.geometry.coordinates,
@@ -33,7 +33,7 @@ export function insertWaypointInRoute(existingWaypoints, newCoordinate, threshol
     const segmentStart = existingWaypoints[i];
     const segmentEnd = existingWaypoints[i + 1];
     
-    const nearest = nearestPointOnLine([segmentStart, segmentEnd], newCoordinate);
+    const nearest = findNearestPointOnLine([segmentStart, segmentEnd], newCoordinate);
     
     if (nearest && nearest.distance < minDistance && nearest.distance < threshold) {
       minDistance = nearest.distance;
@@ -68,8 +68,8 @@ export function simplifyRoute(waypoints, tolerance = 0.001) {
   if (waypoints.length <= 2) return waypoints;
   
   try {
-    const line = turf.lineString(waypoints);
-    const simplified = turf.simplify(line, { tolerance, highQuality: true });
+    const line = lineString(waypoints);
+    const simplified = simplify(line, { tolerance, highQuality: true });
     return simplified.geometry.coordinates;
   } catch (error) {
     console.error('Route simplification failed:', error);

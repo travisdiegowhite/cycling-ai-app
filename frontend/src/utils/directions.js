@@ -9,7 +9,7 @@ export async function mapMatchRoute(waypoints, accessToken, options = {}) {
   
   const {
     profile = 'cycling',
-    radiuses = waypoints.map(() => 50), // Maximum allowed radius is 50m
+    radiuses = waypoints.map(() => 100), // Increased radius for better cycling path matching
     annotations = 'distance,duration',
     overview = 'full',
     geometries = 'geojson'
@@ -111,10 +111,20 @@ export async function fetchElevationProfile(coordinates, accessToken) {
   }
 }
 
-// Simulate elevation data (replace with actual terrain RGB decoding in production)
+/**
+ * Simulates elevation data for a given latitude and longitude.
+ * 
+ * This function is used as a placeholder for elevation data when actual Mapbox Terrain-RGB decoding
+ * is not implemented or available (e.g., during development or testing). In production, replace this
+ * function with one that fetches and decodes real elevation data from Mapbox Terrain-RGB tiles.
+ * 
+ * @param {number} lat - Latitude of the point.
+ * @param {number} lon - Longitude of the point.
+ * @returns {Promise<number>} Simulated elevation value in meters.
+ */
 async function simulateElevation(lat, lon) {
   // Simple elevation simulation based on latitude and some randomness
-  // In production, this would decode actual Terrain-RGB tile data
+  // TODO: In production, implement decoding of actual Terrain-RGB tile data here
   const baseElevation = Math.abs(lat) * 10; // Higher latitudes = higher elevation (very rough)
   const variation = Math.sin(lon * 0.1) * Math.cos(lat * 0.1) * 50;
   const randomness = (Math.random() - 0.5) * 20;
@@ -154,11 +164,73 @@ export async function fetchCyclingSegment(start, end, accessToken) {
   return result.coordinates || null;
 }
 
+// Get cycling directions between points using Directions API
+export async function getCyclingDirections(waypoints, accessToken, options = {}) {
+  if (waypoints.length < 2) {
+    return { coordinates: waypoints, distance: 0, duration: 0, confidence: 0 };
+  }
+
+  const {
+    profile = 'cycling', // Use cycling profile for bike-friendly routes
+    alternatives = false,
+    steps = false,
+    geometries = 'geojson',
+    overview = 'full'
+  } = options;
+
+  // Format coordinates for the API
+  const coordinates = waypoints.map(([lon, lat]) => `${lon},${lat}`).join(';');
+  
+  const url = `https://api.mapbox.com/directions/v5/mapbox/${profile}/${coordinates}?` +
+    `alternatives=${alternatives}&` +
+    `geometries=${geometries}&` +
+    `overview=${overview}&` +
+    `steps=${steps}&` +
+    `access_token=${accessToken}`;
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.error(`Directions API error: ${response.status} ${response.statusText}`);
+      return { coordinates: waypoints, distance: 0, duration: 0, confidence: 0 };
+    }
+    
+    const data = await response.json();
+    
+    if (!data.routes || !data.routes.length) {
+      console.warn('No routes found in directions response');
+      return { coordinates: waypoints, distance: 0, duration: 0, confidence: 0 };
+    }
+
+    const route = data.routes[0];
+    
+    return {
+      coordinates: route.geometry.coordinates,
+      distance: route.distance || 0,
+      duration: route.duration || 0,
+      confidence: 0.9, // Directions API generally has high confidence
+      profile: profile
+    };
+  } catch (error) {
+    console.error('Directions request failed:', error);
+    return { coordinates: waypoints, distance: 0, duration: 0, confidence: 0 };
+  }
+}
+
 export async function buildSnappedRoute(waypoints, accessToken, onProgress) {
   if (waypoints.length < 2) return [...waypoints];
   
   onProgress && onProgress(0.1);
-  const result = await mapMatchRoute(waypoints, accessToken);
+  
+  // Try Directions API first for better cycling routes
+  let result = await getCyclingDirections(waypoints, accessToken);
+  
+  // If directions fails or has low confidence, fall back to map matching
+  if (!result.coordinates || result.coordinates.length < 2 || result.confidence < 0.5) {
+    console.log('Falling back to map matching for route snapping');
+    result = await mapMatchRoute(waypoints, accessToken);
+  }
+  
   onProgress && onProgress(1.0);
   
   return result.coordinates || waypoints;

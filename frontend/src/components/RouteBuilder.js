@@ -387,6 +387,7 @@ const RouteBuilder = ({ active, onExit, onSaved, mapRef }) => {
         </Source>
       )}
 
+      {/* Markers are not draggable via react-map-gl's built-in drag, because we implement custom drag logic using onMouseDown/onTouchStart and track pointer on the map */}
       {points.map((pt, i) => (
         <Marker
           key={i}
