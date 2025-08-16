@@ -16,20 +16,23 @@ import {
 } from '@mantine/core';
 import { Route, Plus, MapPin, Square } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useUnits } from '../utils/units';
 import { supabase } from '../supabase';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import './Map.css';
 import RouteBuilder from './RouteBuilder';
 import RouteProfile from './RouteProfile';
+import ElevationProfileBar from './ElevationProfileBar';
 
 const MapComponent = () => {
   const { user } = useAuth();
+  const { formatDistance, formatElevation } = useUnits();
   const [routes, setRoutes] = useState([]);
   const [selectedRoute, setSelectedRoute] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [viewState, setViewState] = useState({
-    longitude: -0.09,
-    latitude: 51.505,
+    longitude: -104.9903,  // Denver, Colorado
+    latitude: 39.7392,     // Denver, Colorado
     zoom: 13,
     pitch: 0,
     bearing: 0,
@@ -40,6 +43,8 @@ const MapComponent = () => {
   const mapRef = useRef(null);
   const [refreshFlag, setRefreshFlag] = useState(0); // used to refetch after save
   const [selectedRouteData, setSelectedRouteData] = useState(null); // Full route data for profile
+  const [routeBuilderMapElements, setRouteBuilderMapElements] = useState(null); // Map elements from route builder
+  const [routeBuilderData, setRouteBuilderData] = useState(null); // Route builder elevation and stats data
 
   // Center map at user current location if available and no stored routes yet
   useEffect(() => {
@@ -120,7 +125,23 @@ const MapComponent = () => {
             {builderActive ? 'Finish Building' : 'Build New Route'}
           </Button>
 
-          <ScrollArea style={{ height: 'calc(100vh - 300px)' }}>
+          {builderActive && (
+            <RouteBuilder
+              active={builderActive}
+              mapRef={mapRef}
+              onExit={() => setBuilderActive(false)}
+              onSaved={(newRoute) => {
+                setBuilderActive(false);
+                setRefreshFlag(f => f + 1);
+                setSelectedRoute(newRoute.id);
+              }}
+              inline={true}
+              onMapElementsChange={setRouteBuilderMapElements}
+              onRouteDataChange={setRouteBuilderData}
+            />
+          )}
+
+          <ScrollArea style={{ height: builderActive ? 'calc(100vh - 600px)' : 'calc(100vh - 300px)' }}>
             {isLoading ? (
               <Center py="xl">
                 <Loader size="sm" />
@@ -168,7 +189,7 @@ const MapComponent = () => {
                       
                       <Group gap="xs">
                         <Badge size="xs" variant="light">
-                          {route.summary?.distance?.toFixed(1)} km
+                          {formatDistance(route.summary?.distance || 0)}
                         </Badge>
                         {route.summary?.snapped && (
                           <Badge size="xs" color="blue" variant="light">
@@ -198,16 +219,10 @@ const MapComponent = () => {
           className="map-inner"
         >
         <NavigationControl position="top-right" />
-        <RouteBuilder
-          active={builderActive}
-          mapRef={mapRef}
-          onExit={() => setBuilderActive(false)}
-          onSaved={(newRoute) => {
-            setBuilderActive(false);
-            setRefreshFlag(f => f + 1);
-            setSelectedRoute(newRoute.id);
-          }}
-        />
+        
+        {/* Render route builder map elements */}
+        {routeBuilderMapElements}
+        
           {routes.map((route, index) => {
             if (!route.track_points?.length) return null;
             
@@ -276,6 +291,35 @@ const MapComponent = () => {
             min: selectedRouteData.summary?.elevation_min,
             max: selectedRouteData.summary?.elevation_max
           }}
+        />
+      )}
+
+      {/* Elevation Profile Bar - shows for route builder or selected route */}
+      {(routeBuilderData?.elevationProfile || selectedRouteData) && (
+        <ElevationProfileBar
+          elevationProfile={
+            routeBuilderData?.elevationProfile || 
+            selectedRouteData?.elevation_profile || 
+            []
+          }
+          elevationStats={
+            routeBuilderData?.elevationStats || 
+            {
+              gain: selectedRouteData?.summary?.elevation_gain,
+              loss: selectedRouteData?.summary?.elevation_loss,
+              min: selectedRouteData?.summary?.elevation_min,
+              max: selectedRouteData?.summary?.elevation_max
+            }
+          }
+          routeStats={
+            routeBuilderData?.routeStats || 
+            {
+              distance: selectedRouteData?.summary?.distance,
+              confidence: selectedRouteData?.summary?.confidence,
+              duration: selectedRouteData?.summary?.duration
+            }
+          }
+          isRouteBuilder={!!routeBuilderData}
         />
       )}
     </div>

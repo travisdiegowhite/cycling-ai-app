@@ -9,7 +9,9 @@ import Map from './components/Map';
 import AIRouteMap from './components/AIRouteMap';
 import AppLayout from './components/AppLayout';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { UnitPreferencesProvider } from './utils/units';
 import { theme } from './theme';
+import './utils/testORS'; // Import test utilities for browser console access
 import './App.css';
 
 const AppContent = () => {
@@ -43,7 +45,9 @@ function App() {
       <Notifications />
       <Toaster position="top-right" />
       <AuthProvider>
-        <AppContent />
+        <UnitPreferencesProvider>
+          <AppContent />
+        </UnitPreferencesProvider>
       </AuthProvider>
     </MantineProvider>
   );

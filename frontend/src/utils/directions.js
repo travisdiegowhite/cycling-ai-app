@@ -1,63 +1,87 @@
 // Advanced route generation using Mapbox Map Matching API
 // This provides more intelligent route snapping and better performance
 
-// Map Matching API for better route snapping
+// Map Matching API with intelligent radius fallback for better route snapping
 export async function mapMatchRoute(waypoints, accessToken, options = {}) {
+  console.log(`🔧 mapMatchRoute called with ${waypoints.length} waypoints`);
+  
   if (waypoints.length < 2) {
     return { coordinates: waypoints, distance: 0, duration: 0, confidence: 0, profile: 'none' };
   }
   
+  // Mapbox Map Matching API has a limit of 100 waypoints
+  if (waypoints.length > 100) {
+    console.warn(`Too many waypoints (${waypoints.length}), truncating to 100`);
+    waypoints = waypoints.slice(0, 100);
+  }
+  
   const {
     profile = 'cycling',
-    radiuses = waypoints.map(() => 100), // Increased radius for better cycling path matching
     annotations = 'distance,duration',
     overview = 'full',
     geometries = 'geojson'
   } = options;
 
-  // Format coordinates for the API
-  const coordinates = waypoints.map(([lon, lat]) => `${lon},${lat}`).join(';');
-  const radiusStr = radiuses.join(';');
+  // Try different radius sizes for better cycling route matching
+  // Add larger radius for routes with many waypoints
+  const radiusSizes = waypoints.length > 5 ? [15, 25, 50, 100] : [15, 25, 50];
   
-  const url = `https://api.mapbox.com/matching/v5/mapbox/${profile}/${coordinates}?` +
-    `geometries=${geometries}&` +
-    `radiuses=${radiusStr}&` +
-    `steps=false&` +
-    `annotations=${annotations}&` +
-    `overview=${overview}&` +
-    `access_token=${accessToken}`;
+  for (const radius of radiusSizes) {
+    console.log(`Trying map matching with ${radius}m radius...`);
+    
+    const radiuses = waypoints.map(() => radius);
+    const coordinates = waypoints.map(([lon, lat]) => `${lon},${lat}`).join(';');
+    const radiusStr = radiuses.join(';');
+    
+    const url = `https://api.mapbox.com/matching/v5/mapbox/${profile}/${coordinates}?` +
+      `geometries=${geometries}&` +
+      `radiuses=${radiusStr}&` +
+      `steps=false&` +
+      `annotations=${annotations}&` +
+      `overview=${overview}&` +
+      `access_token=${accessToken}`;
 
-  console.log('Map Matching URL:', url); // Debug
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        console.warn(`Map Matching API error with ${radius}m radius: ${response.status} ${response.statusText}`);
+        continue; // Try next radius
+      }
+      
+      const data = await response.json();
+      
+      if (!data.matchings || !data.matchings.length) {
+        console.warn(`No matchings found with ${radius}m radius`);
+        continue; // Try next radius
+      }
 
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      console.error(`Map Matching API error: ${response.status} ${response.statusText}`);
-      return { coordinates: waypoints, distance: 0, duration: 0, confidence: 0, profile: 'failed' };
+      const matching = data.matchings[0];
+      console.log(`✅ Map matching successful with ${radius}m radius, confidence: ${matching.confidence}, coords: ${matching.geometry.coordinates.length}/${waypoints.length}`);
+      
+      // Accept the match if confidence is reasonable or if we have good coordinate expansion
+      // Lower confidence threshold for routes with more waypoints since they're naturally harder to match
+      const minConfidence = waypoints.length > 4 ? 0.15 : 0.25;
+      if (matching.confidence > minConfidence || matching.geometry.coordinates.length > waypoints.length * 1.5) {
+        return {
+          coordinates: matching.geometry.coordinates,
+          distance: matching.distance || 0,
+          duration: matching.duration || 0,
+          confidence: matching.confidence || 0,
+          profile: profile,
+          radius: radius
+        };
+      } else {
+        console.warn(`Low confidence (${matching.confidence} < ${minConfidence}) with ${radius}m radius, trying larger radius...`);
+      }
+    } catch (error) {
+      console.warn(`Map Matching request failed with ${radius}m radius:`, error);
+      continue; // Try next radius
     }
-    
-    const data = await response.json();
-    console.log('Map Matching response:', data); // Debug
-    
-    if (!data.matchings || !data.matchings.length) {
-      console.warn('No matchings found in response');
-      return { coordinates: waypoints, distance: 0, duration: 0, confidence: 0, profile: 'no-match' };
-    }
-
-    const matching = data.matchings[0];
-    console.log('Using matching with confidence:', matching.confidence);
-    
-    return {
-      coordinates: matching.geometry.coordinates,
-      distance: matching.distance || 0,
-      duration: matching.duration || 0,
-      confidence: matching.confidence || 0,
-      profile: profile
-    };
-  } catch (error) {
-    console.error('Map Matching request failed:', error);
-    return { coordinates: waypoints, distance: 0, duration: 0, confidence: 0, profile: 'error' };
   }
+  
+  // If all radius sizes failed, fall back to Directions API
+  console.log('All map matching attempts failed, falling back to Directions API...');
+  return await getCyclingDirections(waypoints, accessToken, { profile });
 }
 
 // Elevation fetching using Mapbox Terrain-RGB tiles

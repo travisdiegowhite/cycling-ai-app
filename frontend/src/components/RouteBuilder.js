@@ -28,9 +28,11 @@ import { mapMatchRoute, fetchElevationProfile, calculateElevationStats } from '.
 import { pointsToGPX } from '../utils/gpx';
 import { supabase } from '../supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useUnits } from '../utils/units';
 
-const RouteBuilder = ({ active, onExit, onSaved, mapRef }) => {
+const RouteBuilder = ({ active, onExit, onSaved, mapRef, inline = false, onMapElementsChange, onRouteDataChange }) => {
   const { user } = useAuth();
+  const { formatDistance, formatElevation } = useUnits();
   const [points, setPoints] = useState([]); // array of [lon, lat]
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -46,7 +48,12 @@ const RouteBuilder = ({ active, onExit, onSaved, mapRef }) => {
   const [elevationStats, setElevationStats] = useState(null);
 
   const addPoint = useCallback((lngLat) => {
-    setPoints(prev => [...prev, [lngLat.lng, lngLat.lat]]);
+    console.log(`🔧 Adding waypoint: ${lngLat.lng}, ${lngLat.lat}`);
+    setPoints(prev => {
+      const newPoints = [...prev, [lngLat.lng, lngLat.lat]];
+      console.log(`🔧 Total waypoints now: ${newPoints.length}`);
+      return newPoints;
+    });
   }, []);
 
   const undo = () => setPoints(p => p.slice(0, -1));
@@ -105,7 +112,7 @@ const RouteBuilder = ({ active, onExit, onSaved, mapRef }) => {
         elevation_max: elevationStats?.max || null
       };
       
-      // Include elevation profile if available
+      // Create route data for database
       const routeData = {
         user_id: user.id,
         metadata,
@@ -113,9 +120,8 @@ const RouteBuilder = ({ active, onExit, onSaved, mapRef }) => {
         summary
       };
       
-      if (elevationProfile && elevationProfile.length > 0) {
-        routeData.elevation_profile = elevationProfile;
-      }
+      // Note: elevation_profile column doesn't exist in database yet
+      // TODO: Add elevation_profile column to routes table if needed
       
       const { data, error } = await supabase.from('routes').insert([routeData]).select();
       
@@ -149,9 +155,13 @@ const RouteBuilder = ({ active, onExit, onSaved, mapRef }) => {
   // Rebuild snapped path when points change and snapping enabled
   React.useEffect(() => {
     let cancelled = false;
+    let timeoutId;
     
     async function snapAndElevate() {
+      console.log(`🔧 snapAndElevate called with ${points.length} points, useSnap: ${useSnap}`);
+      
       if (!useSnap || points.length < 2) { 
+        console.log(`🔧 Skipping snap: useSnap=${useSnap}, points.length=${points.length}`);
         setSnappedCoords([]);
         setRouteMetadata(null);
         setElevationProfile([]);
@@ -175,8 +185,10 @@ const RouteBuilder = ({ active, onExit, onSaved, mapRef }) => {
       setSnapProgress(0.1);
       
       try {
+        console.log(`🔧 Starting map matching for ${points.length} points...`);
         // Use Map Matching API for better route snapping
         const matchResult = await mapMatchRoute(points, token);
+        console.log(`🔧 Map matching result:`, matchResult);
         setSnapProgress(0.6);
         
         if (!cancelled && matchResult && matchResult.coordinates) {
@@ -220,8 +232,17 @@ const RouteBuilder = ({ active, onExit, onSaved, mapRef }) => {
       }
     }
     
-    snapAndElevate();
-    return () => { cancelled = true; };
+    // Debounce the snapping to avoid race conditions when user clicks rapidly
+    timeoutId = setTimeout(() => {
+      if (!cancelled) {
+        snapAndElevate();
+      }
+    }, 500); // Wait 500ms after last point addition
+    
+    return () => { 
+      cancelled = true; 
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [points, useSnap]);
 
   // Custom drag handling: we track pointer on map
@@ -246,186 +267,237 @@ const RouteBuilder = ({ active, onExit, onSaved, mapRef }) => {
     };
   }, [active, dragIndex, mapRef]);
 
+  // Update map elements when inline mode (must be before early return)
+  React.useEffect(() => {
+    if (!active) return;
+    
+    if (inline && onMapElementsChange) {
+      const mapElements = (
+        <>
+          {workingCoords.length >= 2 && (
+            <Source id="draft-route" type="geojson" data={geojson}>
+              <Layer
+                id="draft-route-line"
+                type="line"
+                paint={(function(){
+                  const paint = { 'line-color': useSnap ? '#0066ff' : '#ff8800', 'line-width': 4 };
+                  if (!useSnap) paint['line-dasharray'] = [2,2];
+                  return paint;
+                })()}
+              />
+            </Source>
+          )}
+
+          {points.map((pt, i) => (
+            <Marker
+              key={i}
+              longitude={pt[0]}
+              latitude={pt[1]}
+              anchor="center"
+              draggable={false}
+              onMouseDown={e => { e.originalEvent.stopPropagation(); setDragIndex(i); }}
+              onTouchStart={e => { e.originalEvent.stopPropagation(); setDragIndex(i); }}
+              onClick={e => { e.originalEvent.stopPropagation(); setShowWaypointPopup(i); }}
+            >
+              <div className={`builder-marker ${i===0 ? 'start' : i===points.length-1 ? 'end' : ''}`}/>
+            </Marker>
+          ))}
+
+          {dragIndex != null && (
+            <div style={{ display:'none' }}>{dragIndex}</div>
+          )}
+
+          {showWaypointPopup != null && points[showWaypointPopup] && (
+            <Popup
+              longitude={points[showWaypointPopup][0]}
+              latitude={points[showWaypointPopup][1]}
+              closeOnClick={false}
+              onClose={() => setShowWaypointPopup(null)}
+              anchor="top"
+            >
+              <div style={{ minWidth: 120 }}>
+                <strong>Waypoint {showWaypointPopup + 1}</strong>
+                <div style={{ display:'flex', gap:4, marginTop:6 }}>
+                  <button style={{ flex:1 }} onClick={() => { removePoint(showWaypointPopup); setShowWaypointPopup(null); }}>Remove</button>
+                </div>
+              </div>
+            </Popup>
+          )}
+        </>
+      );
+      
+      onMapElementsChange(mapElements);
+    }
+
+    // Also send route data for elevation profile
+    if (inline && onRouteDataChange) {
+      const routeData = {
+        elevationProfile,
+        elevationStats,
+        routeStats: {
+          distance: distanceKm,
+          confidence: routeMetadata?.confidence || 0,
+          duration: routeMetadata?.duration || null
+        }
+      };
+      onRouteDataChange(routeData);
+    }
+    
+    return () => {
+      if (inline && onMapElementsChange) {
+        onMapElementsChange(null);
+      }
+      if (inline && onRouteDataChange) {
+        onRouteDataChange(null);
+      }
+    };
+  }, [active, inline, onMapElementsChange, onRouteDataChange, workingCoords, points, useSnap, geojson, dragIndex, showWaypointPopup, elevationProfile, elevationStats, distanceKm, routeMetadata]);
+
   if (!active) return null;
 
-  return (
-    <>
-      <Paper
-        shadow="lg"
-        p="md"
-        style={{
-          position: 'absolute',
-          top: 10,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 10,
-          minWidth: 300,
-          maxWidth: 400,
-        }}
-      >
-        <Stack gap="sm">
-          <Group justify="space-between" align="center">
-            <Text fw={600} size="lg">Build Route</Text>
+  const containerStyle = inline ? {
+    // Inline mode - no absolute positioning
+    width: '100%',
+    marginBottom: 16
+  } : {
+    // Overlay mode - absolute positioning
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    zIndex: 10,
+    minWidth: 300,
+    maxWidth: 400,
+  };
+
+  // Split the component: UI goes in sidebar, map elements go in map
+  const uiComponent = (
+    <Paper
+      shadow={inline ? "xs" : "lg"}
+      p="md"
+      style={containerStyle}
+    >
+      <Stack gap="sm">
+        <Group justify="space-between" align="center">
+          <Text fw={600} size="lg">Build Route</Text>
+          {!inline && (
             <ActionIcon variant="subtle" color="red" onClick={onExit}>
               <X size={18} />
             </ActionIcon>
-          </Group>
-
-          <TextInput
-            placeholder="Enter route name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            leftSection={<FileText size={16} />}
-          />
-
-          <Group justify="space-between">
-            <Text size="sm" c="dimmed">
-              {distanceKm.toFixed(2)} km • {points.length} waypoints
-            </Text>
-            {elevationStats && (
-              <Text size="xs" c="dimmed">
-                ↗ {elevationStats.gain}m ↘ {elevationStats.loss}m
-              </Text>
-            )}
-          </Group>
-
-          <Checkbox
-            label={
-              <Group gap="xs">
-                <Text size="sm">Snap to cycling network</Text>
-                {routeMetadata?.confidence && (
-                  <Text size="xs" c="dimmed">
-                    ({Math.round(routeMetadata.confidence * 100)}% confidence
-                    {routeMetadata.profile && routeMetadata.profile !== 'cycling' && 
-                      `, ${routeMetadata.profile}`})
-                  </Text>
-                )}
-              </Group>
-            }
-            checked={useSnap}
-            onChange={(e) => setUseSnap(e.currentTarget.checked)}
-            size="sm"
-          />
-
-          {snapping && (
-            <Progress value={snapProgress * 100} size="sm" animated />
           )}
+        </Group>
 
-          <Group grow>
-            <Button
-              variant="light"
-              leftSection={<Undo2 size={16} />}
-              onClick={undo}
-              disabled={points.length === 0}
-              size="xs"
-            >
-              Undo
-            </Button>
-            <Button
-              variant="light"
-              leftSection={<RotateCcw size={16} />}
-              onClick={reverseRoute}
-              disabled={points.length < 2}
-              size="xs"
-            >
-              Reverse
-            </Button>
-            <Button
-              variant="light"
-              color="red"
-              leftSection={<Trash2 size={16} />}
-              onClick={clearAll}
-              disabled={points.length === 0}
-              size="xs"
-            >
-              Clear
-            </Button>
-          </Group>
+        <TextInput
+          placeholder="Enter route name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          leftSection={<FileText size={16} />}
+        />
 
-          <Group grow>
-            <Button
-              leftSection={<Save size={16} />}
-              onClick={saveRoute}
-              disabled={!canSave}
-              loading={saving}
-            >
-              Save Route
-            </Button>
-            <Button
-              variant="light"
-              leftSection={<Download size={16} />}
-              onClick={exportGPX}
-              disabled={points.length < 2}
-            >
-              Export GPX
-            </Button>
-          </Group>
-
-          {error && (
-            <Alert icon={<AlertCircle size={16} />} color="red">
-              {error}
-            </Alert>
-          )}
-
-          <Text size="xs" c="dimmed">
-            Click on map to add waypoints. Drag markers to reposition. Click markers to remove.
+        <Group justify="space-between">
+          <Text size="sm" c="dimmed">
+            {formatDistance(distanceKm)} • {points.length} waypoints
           </Text>
+          {elevationStats && (
+            <Text size="xs" c="dimmed">
+              ↗ {formatElevation(elevationStats.gain)} ↘ {formatElevation(elevationStats.loss)}
+            </Text>
+          )}
+        </Group>
+
+        <Checkbox
+          label={
+            <Group gap="xs">
+              <Text size="sm">Snap to cycling network</Text>
+              {routeMetadata?.confidence && (
+                <Text size="xs" c="dimmed">
+                  ({Math.round(routeMetadata.confidence * 100)}% confidence
+                  {routeMetadata.profile && routeMetadata.profile !== 'cycling' && 
+                    `, ${routeMetadata.profile}`})
+                </Text>
+              )}
+            </Group>
+          }
+          checked={useSnap}
+          onChange={(e) => setUseSnap(e.currentTarget.checked)}
+          size="sm"
+        />
+
+        {snapping && (
+          <Progress value={snapProgress * 100} size="sm" animated />
+        )}
+
+        <Stack gap="xs">
+          <Button
+            variant="light"
+            leftSection={<Undo2 size={16} />}
+            onClick={undo}
+            disabled={points.length === 0}
+            size="sm"
+            fullWidth
+          >
+            Undo Last Point
+          </Button>
+          <Button
+            variant="light"
+            leftSection={<RotateCcw size={16} />}
+            onClick={reverseRoute}
+            disabled={points.length < 2}
+            size="sm"
+            fullWidth
+          >
+            Reverse Route
+          </Button>
+          <Button
+            variant="light"
+            color="red"
+            leftSection={<Trash2 size={16} />}
+            onClick={clearAll}
+            disabled={points.length === 0}
+            size="sm"
+            fullWidth
+          >
+            Clear All Points
+          </Button>
         </Stack>
-      </Paper>
 
-      {workingCoords.length >= 2 && (
-        <Source id="draft-route" type="geojson" data={geojson}>
-          <Layer
-            id="draft-route-line"
-            type="line"
-            paint={(function(){
-              const paint = { 'line-color': useSnap ? '#0066ff' : '#ff8800', 'line-width': 4 };
-              if (!useSnap) paint['line-dasharray'] = [2,2];
-              return paint;
-            })()}
-          />
-        </Source>
-      )}
+        <Stack gap="xs">
+          <Button
+            leftSection={<Save size={16} />}
+            onClick={saveRoute}
+            disabled={!canSave}
+            loading={saving}
+            size="sm"
+            fullWidth
+          >
+            Save Route
+          </Button>
+          <Button
+            variant="light"
+            leftSection={<Download size={16} />}
+            onClick={exportGPX}
+            disabled={points.length < 2}
+            size="sm"
+            fullWidth
+          >
+            Export GPX
+          </Button>
+        </Stack>
 
-      {/* Markers are not draggable via react-map-gl's built-in drag, because we implement custom drag logic using onMouseDown/onTouchStart and track pointer on the map */}
-      {points.map((pt, i) => (
-        <Marker
-          key={i}
-          longitude={pt[0]}
-          latitude={pt[1]}
-          anchor="center"
-          draggable={false}
-          onMouseDown={e => { e.originalEvent.stopPropagation(); setDragIndex(i); }}
-          onTouchStart={e => { e.originalEvent.stopPropagation(); setDragIndex(i); }}
-          onClick={e => { e.originalEvent.stopPropagation(); setShowWaypointPopup(i); }}
-        >
-          <div className={`builder-marker ${i===0 ? 'start' : i===points.length-1 ? 'end' : ''}`}/>
-        </Marker>
-      ))}
+        {error && (
+          <Alert icon={<AlertCircle size={16} />} color="red">
+            {error}
+          </Alert>
+        )}
 
-      {/* Custom drag overlay for better control */}
-      {dragIndex != null && (
-        <div style={{ display:'none' }}>{dragIndex}</div>
-      )}
-
-      {showWaypointPopup != null && points[showWaypointPopup] && (
-        <Popup
-          longitude={points[showWaypointPopup][0]}
-          latitude={points[showWaypointPopup][1]}
-          closeOnClick={false}
-          onClose={() => setShowWaypointPopup(null)}
-          anchor="top"
-        >
-          <div style={{ minWidth: 120 }}>
-            <strong>Waypoint {showWaypointPopup + 1}</strong>
-            <div style={{ display:'flex', gap:4, marginTop:6 }}>
-              <button style={{ flex:1 }} onClick={() => { removePoint(showWaypointPopup); setShowWaypointPopup(null); }}>Remove</button>
-            </div>
-          </div>
-        </Popup>
-      )}
-    </>
+        <Text size="xs" c="dimmed">
+          Click on map to add waypoints. Drag markers to reposition. Click markers to remove.
+        </Text>
+      </Stack>
+    </Paper>
   );
+
+  // Return only UI component for inline mode since map elements are handled by useEffect
+  return uiComponent;
 };
 
 export default RouteBuilder;

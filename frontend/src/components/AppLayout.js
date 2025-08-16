@@ -14,6 +14,7 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import { Map, Upload, User, LogOut, Route, Brain } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import UnitSettings from './UnitSettings';
 
 const AppLayout = ({ children, activePage, setActivePage }) => {
   const { user, signOut } = useAuth();
@@ -49,31 +50,34 @@ const AppLayout = ({ children, activePage, setActivePage }) => {
             </Group>
           </Group>
 
-          <Menu shadow="md" width={200}>
-            <Menu.Target>
-              <UnstyledButton>
-                <Group gap="xs">
-                  <Avatar size={36} color="blue">
-                    <User size={20} />
-                  </Avatar>
-                  <div style={{ flex: 1 }}>
-                    <Text size="sm" fw={500}>
-                      {user.email?.split('@')[0] || 'User'}
-                    </Text>
-                    <Text size="xs" c="dimmed">
-                      {user.email}
-                    </Text>
-                  </div>
-                </Group>
-              </UnstyledButton>
-            </Menu.Target>
+          <Group gap="sm">
+            <UnitSettings />
+            <Menu shadow="md" width={200}>
+              <Menu.Target>
+                <UnstyledButton>
+                  <Group gap="xs">
+                    <Avatar size={36} color="blue">
+                      <User size={20} />
+                    </Avatar>
+                    <div style={{ flex: 1 }}>
+                      <Text size="sm" fw={500}>
+                        {user.email?.split('@')[0] || 'User'}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {user.email}
+                      </Text>
+                    </div>
+                  </Group>
+                </UnstyledButton>
+              </Menu.Target>
 
-            <Menu.Dropdown>
-              <Menu.Item leftSection={<LogOut size={16} />} onClick={signOut}>
-                Sign out
-              </Menu.Item>
-            </Menu.Dropdown>
-          </Menu>
+              <Menu.Dropdown>
+                <Menu.Item leftSection={<LogOut size={16} />} onClick={signOut}>
+                  Sign out
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+          </Group>
         </Group>
       </AppShell.Header>
 
