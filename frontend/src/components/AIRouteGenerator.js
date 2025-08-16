@@ -27,11 +27,14 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
+import { useUnits } from '../utils/units';
 import { getWeatherData, getMockWeatherData } from '../utils/weather';
 import { generateAIRoutes } from '../utils/aiRouteGenerator';
+import { testORSIntegration } from '../utils/testORS';
 
 const AIRouteGenerator = ({ mapRef, onRouteGenerated, onStartLocationSet }) => {
   const { user } = useAuth();
+  const { formatDistance, formatElevation, formatTemperature, formatSpeed } = useUnits();
   
   // User inputs
   const [timeAvailable, setTimeAvailable] = useState(60); // minutes
@@ -68,7 +71,7 @@ const AIRouteGenerator = ({ mapRef, onRouteGenerated, onStartLocationSet }) => {
       const weather = await getWeatherData(location[1], location[0]);
       if (weather) {
         setWeatherData(weather);
-        toast.success(`Weather updated: ${weather.temperature}°C, ${weather.description}`);
+        toast.success(`Weather updated: ${formatTemperature(weather.temperature)}, ${weather.description}`);
       } else {
         // Use mock data as fallback
         setWeatherData(getMockWeatherData());
@@ -146,7 +149,17 @@ const AIRouteGenerator = ({ mapRef, onRouteGenerated, onStartLocationSet }) => {
     setGeneratedRoutes([]);
 
     try {
-      console.log('Generating routes with weather data:', weatherData);
+      console.log('🚀 Starting route generation...');
+      console.log('Parameters:', { startLocation, timeAvailable, trainingGoal, routeType });
+      console.log('Weather data:', weatherData);
+      
+      // Test ORS integration first
+      console.log('🧪 Testing OpenRouteService integration...');
+      const orsWorking = await testORSIntegration();
+      
+      if (!orsWorking) {
+        toast.error('OpenRouteService not available. Using fallback routing.');
+      }
       
       const routes = await generateAIRoutes({
         startLocation,
@@ -156,6 +169,8 @@ const AIRouteGenerator = ({ mapRef, onRouteGenerated, onStartLocationSet }) => {
         weatherData,
         userId: user?.id,
       });
+      
+      console.log('🎯 Generated routes:', routes);
 
       setGeneratedRoutes(routes);
       
@@ -218,12 +233,12 @@ const AIRouteGenerator = ({ mapRef, onRouteGenerated, onStartLocationSet }) => {
             {weatherData ? (
               <Group gap="md">
                 <Group gap="xs">
-                  <Text size="sm" fw={500}>{weatherData.temperature}°C</Text>
+                  <Text size="sm" fw={500}>{formatTemperature(weatherData.temperature)}</Text>
                 </Group>
                 <Group gap="xs">
                   <Wind size={16} />
                   <Text size="sm">
-                    {weatherData.windSpeed} km/h {weatherData.windDirection}
+                    {formatSpeed(weatherData.windSpeed)} {weatherData.windDirection}
                   </Text>
                 </Group>
               </Group>
@@ -396,11 +411,11 @@ const AIRouteGenerator = ({ mapRef, onRouteGenerated, onStartLocationSet }) => {
                       <Grid gutter="xs">
                         <Grid.Col span={6}>
                           <Text size="xs" c="dimmed">Distance</Text>
-                          <Text size="sm" fw={500}>{route.distance.toFixed(1)} km</Text>
+                          <Text size="sm" fw={500}>{formatDistance(route.distance)}</Text>
                         </Grid.Col>
                         <Grid.Col span={6}>
                           <Text size="xs" c="dimmed">Elevation</Text>
-                          <Text size="sm" fw={500}>+{route.elevationGain}m</Text>
+                          <Text size="sm" fw={500}>+{formatElevation(route.elevationGain)}</Text>
                         </Grid.Col>
                       </Grid>
                       

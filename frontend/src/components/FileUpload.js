@@ -34,10 +34,12 @@ import toast from 'react-hot-toast';
 import { parseGPX } from '../utils/gpx';
 import { supabase } from '../supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useUnits } from '../utils/units';
 import './FileUpload.css';
 
 const FileUpload = () => {
   const { user } = useAuth();
+  const { formatDistance, formatElevation } = useUnits();
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [processedFiles, setProcessedFiles] = useState(new Map());
   const [processingFiles, setProcessingFiles] = useState(new Set());
@@ -438,7 +440,7 @@ const FileUpload = () => {
                                         <Group gap="xs">
                                           <MapPin size={12} style={{ color: '#228be6' }} />
                                           <Text size="xs">
-                                            {(fileData.data?.summary?.distance || 0).toFixed(2)} km
+                                            {formatDistance(fileData.data?.summary?.distance || 0)}
                                           </Text>
                                         </Group>
                                       </Grid.Col>
@@ -456,7 +458,7 @@ const FileUpload = () => {
                                             <Group gap="xs">
                                               <Mountain size={12} style={{ color: '#40c057' }} />
                                               <Text size="xs">
-                                                ↗ {fileData.data?.summary?.elevationGain || 0}m
+                                                ↗ {formatElevation(fileData.data?.summary?.elevationGain || 0)}
                                               </Text>
                                             </Group>
                                           </Grid.Col>
@@ -464,7 +466,7 @@ const FileUpload = () => {
                                             <Group gap="xs">
                                               <Mountain size={12} style={{ color: '#fd7e14' }} />
                                               <Text size="xs">
-                                                ↘ {fileData.data?.summary?.elevationLoss || 0}m
+                                                ↘ {formatElevation(fileData.data?.summary?.elevationLoss || 0)}
                                               </Text>
                                             </Group>
                                           </Grid.Col>

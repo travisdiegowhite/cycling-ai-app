@@ -46,7 +46,9 @@ export function analyzeRidingPatterns(pastRides) {
     frequentAreas: [],
     timePreferences: {},
     distanceDistribution: {},
-    elevationTolerance: { min: 0, max: 1000, preferred: 300 }
+    elevationTolerance: { min: 0, max: 1000, preferred: 300 },
+    routeSegments: [], // New: actual route segments from past rides
+    routeTemplates: [] // New: route templates based on past rides
   };
 
   // Analyze distance preferences
@@ -79,10 +81,74 @@ export function analyzeRidingPatterns(pastRides) {
     patterns.preferredDirections = analyzePreferredDirections(rideLocations);
   }
 
+  // Extract route segments from all past rides
+  const allSegments = pastRides
+    .map(ride => extractRouteSegments(ride))
+    .flat()
+    .filter(segment => segment.coordinates.length > 0);
+  
+  patterns.routeSegments = buildSegmentDatabase(allSegments);
+  
+  // Create route templates from past rides
+  patterns.routeTemplates = createRouteTemplates(pastRides);
+
   return patterns;
 }
 
-// Extract key locations from a ride
+// Extract actual route segments from a ride
+function extractRouteSegments(ride) {
+  if (!ride.track_points || ride.track_points.length < 10) {
+    return [];
+  }
+
+  const trackPoints = ride.track_points;
+  const segments = [];
+  
+  // Extract meaningful segments (every ~2km or significant direction changes)
+  const segmentDistance = 2; // km
+  let currentSegment = [trackPoints[0]];
+  let segmentDistance_m = 0;
+  
+  for (let i = 1; i < trackPoints.length; i++) {
+    const prev = trackPoints[i - 1];
+    const curr = trackPoints[i];
+    
+    // Calculate distance between points
+    const distance = calculateDistance(
+      [prev.longitude, prev.latitude],
+      [curr.longitude, curr.latitude]
+    ) * 1000; // Convert to meters
+    
+    segmentDistance_m += distance;
+    currentSegment.push(curr);
+    
+    // End segment if we've traveled enough distance or reached end
+    if (segmentDistance_m >= segmentDistance * 1000 || i === trackPoints.length - 1) {
+      if (currentSegment.length >= 5) { // Ensure segment has enough points
+        segments.push({
+          coordinates: currentSegment.map(p => [p.longitude, p.latitude]),
+          startPoint: [currentSegment[0].longitude, currentSegment[0].latitude],
+          endPoint: [currentSegment[currentSegment.length - 1].longitude, currentSegment[currentSegment.length - 1].latitude],
+          distance: segmentDistance_m / 1000, // km
+          bearing: calculateBearing(
+            [currentSegment[0].longitude, currentSegment[0].latitude],
+            [currentSegment[currentSegment.length - 1].longitude, currentSegment[currentSegment.length - 1].latitude]
+          ),
+          rideId: ride.id,
+          timestamp: ride.uploaded_at
+        });
+      }
+      
+      // Start new segment
+      currentSegment = [curr];
+      segmentDistance_m = 0;
+    }
+  }
+  
+  return segments;
+}
+
+// Extract key locations and route patterns from a ride
 function extractRideLocations(ride) {
   if (!ride.track_points || ride.track_points.length === 0) {
     return [];
@@ -90,43 +156,52 @@ function extractRideLocations(ride) {
 
   const trackPoints = ride.track_points;
   const locations = [];
-
-  // Start point
-  if (trackPoints[0]) {
+  
+  // Extract key junction points and decision points
+  const keyPoints = findKeyPoints(trackPoints);
+  
+  keyPoints.forEach((point, index) => {
     locations.push({
-      lat: trackPoints[0].latitude,
-      lon: trackPoints[0].longitude,
-      type: 'start'
+      lat: point.latitude,
+      lon: point.longitude,
+      type: index === 0 ? 'start' : index === keyPoints.length - 1 ? 'end' : 'junction',
+      confidence: point.confidence || 1.0
     });
-  }
-
-  // Sample points along the route (every 10% of the route)
-  const sampleIndices = [];
-  for (let i = 10; i <= 90; i += 20) {
-    const index = Math.floor((trackPoints.length - 1) * (i / 100));
-    sampleIndices.push(index);
-  }
-
-  sampleIndices.forEach(index => {
-    if (trackPoints[index]) {
-      locations.push({
-        lat: trackPoints[index].latitude,
-        lon: trackPoints[index].longitude,
-        type: 'waypoint'
-      });
-    }
   });
 
-  // End point
-  if (trackPoints[trackPoints.length - 1]) {
-    locations.push({
-      lat: trackPoints[trackPoints.length - 1].latitude,
-      lon: trackPoints[trackPoints.length - 1].longitude,
-      type: 'end'
-    });
-  }
-
   return locations;
+}
+
+// Find key decision points in a route (turns, junctions, etc.)
+function findKeyPoints(trackPoints) {
+  if (trackPoints.length < 3) return trackPoints;
+  
+  const keyPoints = [trackPoints[0]]; // Always include start
+  
+  // Look for significant bearing changes (turns)
+  for (let i = 1; i < trackPoints.length - 1; i++) {
+    const prev = trackPoints[i - 1];
+    const curr = trackPoints[i];
+    const next = trackPoints[i + 1];
+    
+    const bearing1 = calculateBearing([prev.longitude, prev.latitude], [curr.longitude, curr.latitude]);
+    const bearing2 = calculateBearing([curr.longitude, curr.latitude], [next.longitude, next.latitude]);
+    
+    let bearingChange = Math.abs(bearing2 - bearing1);
+    if (bearingChange > 180) bearingChange = 360 - bearingChange;
+    
+    // If significant turn (>30 degrees), mark as key point
+    if (bearingChange > 30) {
+      keyPoints.push({
+        ...curr,
+        confidence: Math.min(bearingChange / 90, 1.0) // Higher confidence for sharper turns
+      });
+    }
+  }
+  
+  keyPoints.push(trackPoints[trackPoints.length - 1]); // Always include end
+  
+  return keyPoints;
 }
 
 // Find areas where user frequently rides
@@ -315,7 +390,8 @@ export function generateRouteFromPatterns(patterns, params) {
     preferredDirection,
     nearbyFrequentAreas: nearbyAreas,
     elevationTarget: getElevationTarget(patterns, trainingGoal),
-    confidence: calculatePatternConfidence(patterns)
+    confidence: calculatePatternConfidence(patterns),
+    ridingPatterns: patterns // Pass the full patterns including segments and templates
   };
 }
 
@@ -421,6 +497,219 @@ function calculatePatternConfidence(patterns) {
   return factors > 0 ? score / factors : 0;
 }
 
+// Build a database of route segments for reuse
+function buildSegmentDatabase(allSegments) {
+  const segmentDatabase = [];
+  const tolerance = 0.005; // ~500m tolerance for grouping similar segments
+  
+  // Group similar segments together
+  allSegments.forEach(segment => {
+    let addedToGroup = false;
+    
+    for (const dbSegment of segmentDatabase) {
+      // Check if segments are similar (same start/end area and bearing)
+      const startDistance = calculateDistance(segment.startPoint, dbSegment.startPoint);
+      const endDistance = calculateDistance(segment.endPoint, dbSegment.endPoint);
+      const bearingDiff = Math.abs(segment.bearing - dbSegment.bearing);
+      const normalizedBearingDiff = bearingDiff > 180 ? 360 - bearingDiff : bearingDiff;
+      
+      if (startDistance < tolerance && endDistance < tolerance && normalizedBearingDiff < 30) {
+        // This is a similar segment, merge it
+        dbSegment.usageCount = (dbSegment.usageCount || 1) + 1;
+        dbSegment.lastUsed = Math.max(dbSegment.lastUsed || 0, new Date(segment.timestamp).getTime());
+        
+        // Keep the most detailed coordinates
+        if (segment.coordinates.length > dbSegment.coordinates.length) {
+          dbSegment.coordinates = segment.coordinates;
+        }
+        
+        addedToGroup = true;
+        break;
+      }
+    }
+    
+    if (!addedToGroup) {
+      segmentDatabase.push({
+        ...segment,
+        usageCount: 1,
+        lastUsed: new Date(segment.timestamp).getTime(),
+        quality: 'proven' // This segment comes from actual rides
+      });
+    }
+  });
+  
+  // Sort by usage frequency and recency
+  return segmentDatabase.sort((a, b) => {
+    const scoreA = (a.usageCount || 1) * 0.7 + (a.lastUsed || 0) / 1000000000 * 0.3;
+    const scoreB = (b.usageCount || 1) * 0.7 + (b.lastUsed || 0) / 1000000000 * 0.3;
+    return scoreB - scoreA;
+  });
+}
+
+// Create route templates from past rides
+function createRouteTemplates(pastRides) {
+  const templates = [];
+  
+  pastRides.forEach(ride => {
+    if (!ride.track_points || ride.track_points.length < 20) return;
+    
+    const distance = ride.summary?.distance || 0;
+    const elevationGain = ride.summary?.elevation_gain || 0;
+    
+    // Extract route shape/pattern
+    const keyPoints = findKeyPoints(ride.track_points);
+    
+    if (keyPoints.length >= 3) { // Need at least start, middle, end
+      const template = {
+        id: ride.id,
+        distance,
+        elevationGain,
+        keyPoints: keyPoints.map(p => [p.longitude, p.latitude]),
+        startArea: [keyPoints[0].longitude, keyPoints[0].latitude],
+        pattern: analyzeRoutePattern(keyPoints),
+        segments: extractRouteSegments(ride),
+        confidence: Math.min(keyPoints.length / 10, 1.0), // More key points = higher confidence
+        timestamp: ride.uploaded_at
+      };
+      
+      templates.push(template);
+    }
+  });
+  
+  return templates.sort((a, b) => b.confidence - a.confidence);
+}
+
+// Analyze the pattern of a route (loop, out-back, etc.)
+function analyzeRoutePattern(keyPoints) {
+  if (keyPoints.length < 3) return 'unknown';
+  
+  const start = keyPoints[0];
+  const end = keyPoints[keyPoints.length - 1];
+  
+  // Check if it's a loop (start and end are close)
+  const startEndDistance = calculateDistance(
+    [start.longitude, start.latitude],
+    [end.longitude, end.latitude]
+  );
+  
+  if (startEndDistance < 0.5) { // Within 500m
+    return 'loop';
+  }
+  
+  // Check if it's out-and-back (similar path in reverse)
+  if (keyPoints.length >= 4) {
+    const midPoint = Math.floor(keyPoints.length / 2);
+    const outbound = keyPoints.slice(0, midPoint);
+    const inbound = keyPoints.slice(midPoint).reverse();
+    
+    // Check if outbound and inbound are similar
+    let similarPoints = 0;
+    const checkCount = Math.min(outbound.length, inbound.length);
+    
+    for (let i = 0; i < checkCount; i++) {
+      const distance = calculateDistance(
+        [outbound[i].longitude, outbound[i].latitude],
+        [inbound[i].longitude, inbound[i].latitude]
+      );
+      if (distance < 1) { // Within 1km
+        similarPoints++;
+      }
+    }
+    
+    if (similarPoints / checkCount > 0.6) { // 60% similar
+      return 'out_back';
+    }
+  }
+  
+  return 'point_to_point';
+}
+
+// Use real route segments to build new routes
+export function buildRouteFromSegments(startLocation, targetDistance, trainingGoal, patterns) {
+  if (!patterns.routeSegments || patterns.routeSegments.length === 0) {
+    return null;
+  }
+  
+  const nearbySegments = patterns.routeSegments.filter(segment => {
+    const distanceToStart = calculateDistance(startLocation, segment.startPoint);
+    const distanceToEnd = calculateDistance(startLocation, segment.endPoint);
+    return Math.min(distanceToStart, distanceToEnd) < 5; // Within 5km
+  });
+  
+  if (nearbySegments.length === 0) {
+    return null;
+  }
+  
+  // Try to chain segments together to build a route
+  const route = chainSegments(nearbySegments, startLocation, targetDistance);
+  
+  if (route && route.coordinates.length > 10) {
+    return {
+      name: 'Route from Your Rides',
+      coordinates: route.coordinates,
+      distance: route.distance,
+      elevationGain: route.elevationGain || 0,
+      elevationLoss: route.elevationLoss || 0,
+      difficulty: calculateDifficulty(route.distance, route.elevationGain || 0),
+      description: 'Built from your actual riding patterns',
+      trainingGoal,
+      pattern: 'historical',
+      confidence: 0.95, // High confidence since it's from real rides
+      source: 'segments'
+    };
+  }
+  
+  return null;
+}
+
+// Chain route segments together to build a complete route
+function chainSegments(segments, startLocation, targetDistance) {
+  // Simple implementation: find the best segment near start and use it
+  // In a more advanced version, this would intelligently chain multiple segments
+  
+  let bestSegment = null;
+  let bestDistance = Infinity;
+  
+  for (const segment of segments) {
+    const distanceToStart = calculateDistance(startLocation, segment.startPoint);
+    const distanceToEnd = calculateDistance(startLocation, segment.endPoint);
+    const minDistance = Math.min(distanceToStart, distanceToEnd);
+    
+    if (minDistance < bestDistance && segment.distance <= targetDistance * 1.5) {
+      bestDistance = minDistance;
+      bestSegment = segment;
+    }
+  }
+  
+  if (bestSegment) {
+    // If we're closer to the end point, reverse the segment
+    const distanceToStart = calculateDistance(startLocation, bestSegment.startPoint);
+    const distanceToEnd = calculateDistance(startLocation, bestSegment.endPoint);
+    
+    const coordinates = distanceToEnd < distanceToStart ? 
+      [...bestSegment.coordinates].reverse() : 
+      bestSegment.coordinates;
+    
+    return {
+      coordinates,
+      distance: bestSegment.distance,
+      elevationGain: bestSegment.elevationGain || 0,
+      elevationLoss: bestSegment.elevationLoss || 0
+    };
+  }
+  
+  return null;
+}
+
+// Calculate difficulty
+function calculateDifficulty(distance, elevationGain) {
+  const elevationRatio = elevationGain / distance; // meters per km
+  
+  if (elevationRatio < 10) return 'easy';
+  if (elevationRatio < 25) return 'moderate';
+  return 'hard';
+}
+
 // Default patterns for new users
 function getDefaultPatterns() {
   return {
@@ -442,6 +731,8 @@ function getDefaultPatterns() {
       long: 0.2,
       veryLong: 0.0
     },
-    elevationTolerance: { min: 0, max: 1000, preferred: 300, mean: 300 }
+    elevationTolerance: { min: 0, max: 1000, preferred: 300, mean: 300 },
+    routeSegments: [],
+    routeTemplates: []
   };
 }
