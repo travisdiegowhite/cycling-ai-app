@@ -12,7 +12,7 @@ import {
   Flex,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { Map, Upload, User, LogOut, Route, Brain } from 'lucide-react';
+import { Map, Upload, User, LogOut, Route, Brain, BarChart3 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import UnitSettings from './UnitSettings';
 
@@ -111,6 +111,16 @@ const AppLayout = ({ children, activePage, setActivePage }) => {
             fullWidth
           >
             Route Builder
+          </Button>
+
+          <Button
+            variant={activePage === 'analysis' ? 'filled' : 'subtle'}
+            leftSection={<BarChart3 size={18} />}
+            onClick={() => setActivePage('analysis')}
+            justify="flex-start"
+            fullWidth
+          >
+            Ride Analysis
           </Button>
         </Flex>
 

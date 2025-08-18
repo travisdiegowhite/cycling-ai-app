@@ -7,6 +7,7 @@ import FileUpload from './components/FileUpload';
 import Auth from './components/Auth';
 import Map from './components/Map';
 import AIRouteMap from './components/AIRouteMap';
+import RideAnalysis from './components/RideAnalysis';
 import AppLayout from './components/AppLayout';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { UnitPreferencesProvider } from './utils/units';
@@ -26,6 +27,8 @@ const AppContent = () => {
         return <AIRouteMap />;
       case 'map':
         return <Map />;
+      case 'analysis':
+        return <RideAnalysis />;
       case 'upload':
       default:
         return <FileUpload />;
