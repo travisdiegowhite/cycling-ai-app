@@ -28,8 +28,24 @@ This application requires specific environment variables to be set for proper fu
 When deploying to production, ensure you set up these environment variables in your hosting platform:
 
 #### Vercel
+
+##### Option 1: Using Vercel CLI
+```bash
+# Install Vercel CLI if not already installed
+npm i -g vercel
+
+# Deploy from the root directory (where vercel.json is located)
+vercel
+
+# Add environment variables
+vercel env add REACT_APP_SUPABASE_URL
+vercel env add REACT_APP_SUPABASE_ANON_KEY
+```
+
+##### Option 2: Using Vercel Dashboard
 - Add environment variables in the Vercel project settings
 - Ensure you check "Production" when adding the variables
+- Redeploy after adding variables
 
 #### Netlify
 - Add environment variables in Site settings > Build & deploy > Environment
