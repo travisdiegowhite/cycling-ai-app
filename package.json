@@ -1,28 +1,63 @@
 {
   "name": "cycling-ai-app",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "deploy": "vercel --prod",
-    "build": "cd frontend && npm run build",
-    "dev": "cd frontend && npm start"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "devDependencies": {
-    "eslint": "^9.33.0",
-    "prettier": "^3.6.2"
-  },
+  "version": "0.1.0",
+  "private": true,
   "dependencies": {
     "@mantine/core": "^8.2.4",
+    "@mantine/dropzone": "^8.2.4",
     "@mantine/hooks": "^8.2.4",
+    "@mantine/notifications": "^8.2.4",
+    "@supabase/supabase-js": "^2.54.0",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.6.4",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^13.5.0",
+    "@turf/turf": "^7.2.0",
+    "@types/mapbox-gl": "^3.4.1",
+    "dayjs": "^1.11.13",
+    "fit-file-parser": "^1.21.0",
+    "leaflet": "^1.9.4",
     "lucide-react": "^0.539.0",
+    "mapbox-gl": "^2.15.0",
+    "pako": "^2.1.0",
+    "papaparse": "^5.5.3",
     "postcss": "^8.5.6",
     "postcss-preset-mantine": "^1.18.0",
     "postcss-simple-vars": "^7.0.1",
-    "react-hot-toast": "^2.5.2"
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-hot-toast": "^2.5.2",
+    "react-leaflet": "^5.0.0",
+    "react-map-gl": "^7.1.9",
+    "react-scripts": "5.0.1",
+    "recharts": "^3.1.2",
+    "web-vitals": "^2.1.4",
+    "xml2js": "^0.6.2"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "deploy": "vercel --prod",
+    "dev": "npm start"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
   }
 }
